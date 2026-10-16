@@ -17,7 +17,7 @@ on:
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -43,3 +43,37 @@ jobs:
         with:
           name: opencode-windows-x64
           path: packages/opencode/dist/opencode-windows-x64
+
+      - name: Package latest binaries
+        run: |
+          set -euo pipefail
+          cd packages/opencode/dist
+          shopt -s nullglob
+          for d in opencode-linux-* opencode-windows-*; do
+            [ -d "$d" ] || continue
+            if [[ "$d" == *windows* ]]; then
+              (cd "$d/bin" && zip -r "../../$d.zip" *)
+            else
+              (cd "$d/bin" && tar -czf "../../$d.tar.gz" *)
+            fi
+            rm -rf "$d"
+          done
+
+      - name: Publish to latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd packages/opencode/dist
+          shopt -s nullglob
+          archives=(*.zip *.tar.gz)
+          if [ ${#archives[@]} -eq 0 ]; then
+            echo "No archives to publish"
+            exit 1
+          fi
+          if gh release view latest --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload latest "${archives[@]}" --clobber --repo "${{ github.repository }}"
+          else
+            gh release create latest "${archives[@]}" --title "latest" --repo "${{ github.repository }}" || \
+              gh release upload latest "${archives[@]}" --clobber --repo "${{ github.repository }}"
+          fi
