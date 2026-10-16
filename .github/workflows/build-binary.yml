@@ -1,0 +1,79 @@
+name: build-binary
+run-name: "build binary"
+
+on:
+  push:
+    branches:
+      - dev
+      - beta
+      - ci
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Override version (optional)"
+        required: false
+        type: string
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Build
+        run: bun run packages/opencode/script/build.ts --skip-embed-web-ui
+        env:
+          OPENCODE_VERSION: ${{ inputs.version }}
+
+      - name: Upload Linux x64 artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: opencode-linux-x64
+          path: packages/opencode/dist/opencode-linux-x64
+
+      - name: Upload Windows x64 artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: opencode-windows-x64
+          path: packages/opencode/dist/opencode-windows-x64
+
+      - name: Package latest binaries
+        run: |
+          set -euo pipefail
+          cd packages/opencode/dist
+          shopt -s nullglob
+          for d in opencode-linux-* opencode-windows-*; do
+            [ -d "$d" ] || continue
+            if [[ "$d" == *windows* ]]; then
+              (cd "$d/bin" && zip -r "../../$d.zip" *)
+            else
+              (cd "$d/bin" && tar -czf "../../$d.tar.gz" *)
+            fi
+            rm -rf "$d"
+          done
+
+      - name: Publish to latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd packages/opencode/dist
+          shopt -s nullglob
+          archives=(*.zip *.tar.gz)
+          if [ ${#archives[@]} -eq 0 ]; then
+            echo "No archives to publish"
+            exit 1
+          fi
+          if gh release view latest --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload latest "${archives[@]}" --clobber --repo "${{ github.repository }}"
+          else
+            gh release create latest "${archives[@]}" --title "latest" --repo "${{ github.repository }}" || \
+              gh release upload latest "${archives[@]}" --clobber --repo "${{ github.repository }}"
+          fi
