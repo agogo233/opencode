@@ -116,6 +116,9 @@ type ResourceInfo = Awaited<ReturnType<MCPClient["listResources"]>>["resources"]
 type ResourceTemplateInfo = Awaited<ReturnType<MCPClient["listResourceTemplates"]>>["resourceTemplates"][number]
 type McpEntry = NonNullable<ConfigV1.Info["mcp"]>[string]
 
+/** Prompts exposed by connected MCP servers, keyed by command name. */
+export type Prompts = Record<string, PromptInfo & { client: string }>
+
 function isMcpConfigured(entry: McpEntry): entry is ConfigMCPV1.Info {
   return typeof entry === "object" && entry !== null && "type" in entry
 }
@@ -166,7 +169,9 @@ export interface Interface {
   readonly clients: () => Effect.Effect<Record<string, MCPClient>>
   readonly instructions: () => Effect.Effect<ServerInstructions[]>
   readonly tools: () => Effect.Effect<Record<string, McpTool>>
-  readonly prompts: () => Effect.Effect<Record<string, PromptInfo & { client: string }>>
+  readonly prompts: () => Effect.Effect<Prompts>
+  /** Drops the per-directory MCP state so the next call re-runs initialization (e.g. after an interrupted lookup). */
+  readonly invalidate: () => Effect.Effect<void>
   readonly resources: (clientName?: string) => Effect.Effect<Record<string, ResourceInfo & { client: string }>>
   readonly resourceTemplates: (
     clientName?: string,
@@ -717,6 +722,12 @@ const layer = Layer.effect(
       return yield* collectFromConnected(yield* InstanceState.get(state), McpCatalog.prompts, "prompts")
     })
 
+    // Removes the per-directory state, including an interrupted lookup cached by ScopedCache,
+    // so later MCP calls re-run initialization instead of failing on the cached exit forever.
+    const invalidate = Effect.fn("MCP.invalidate")(function* () {
+      yield* InstanceState.invalidate(state)
+    })
+
     const resources = Effect.fn("MCP.resources")(function* (clientName?: string) {
       return yield* collectFromConnected(
         yield* InstanceState.get(state),
@@ -975,6 +986,7 @@ const layer = Layer.effect(
       instructions,
       tools,
       prompts,
+      invalidate,
       resources,
       resourceTemplates,
       add,

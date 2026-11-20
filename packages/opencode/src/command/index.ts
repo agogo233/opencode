@@ -102,7 +102,16 @@ const layer = Layer.effect(
         }
       }
 
-      for (const [name, prompt] of Object.entries(yield* mcp.prompts())) {
+      // mcp.prompts() triggers MCP state init (server connects). When an MCP server is
+      // unreachable (e.g. blackholed host), that init can hang indefinitely and dead-lock
+      // command state init, so /command and command invocation never respond for the
+      // directory. Bound it, fall back to no MCP prompts, and drop the interrupted MCP
+      // state so later MCP calls retry; MCP tools connect through their own path.
+      const mcpPrompts = yield* mcp.prompts().pipe(
+        Effect.timeout("10 seconds"),
+        Effect.catchTag("TimeoutError", () => mcp.invalidate().pipe(Effect.map((): MCP.Prompts => ({})))),
+      )
+      for (const [name, prompt] of Object.entries(mcpPrompts)) {
         commands[name] = {
           name,
           source: "mcp",
