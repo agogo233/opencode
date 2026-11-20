@@ -1398,11 +1398,17 @@ const layer = Layer.effect(
       if (shellMatches.length > 0) {
         const cfg = yield* config.get()
         const sh = Shell.preferred(cfg.shell)
+        // Effect.promise (0-arg callback) registers no interrupt finalizer; wire an
+        // AbortController so fiber interruption (disconnect, cancel, shutdown) kills the children.
+        const controller = new AbortController()
         const results = yield* Effect.promise(() =>
           Promise.all(
-            shellMatches.map(async ([, cmd]) => (await Process.text([cmd], { shell: sh, nothrow: true })).text),
+            shellMatches.map(async ([, cmd]) => {
+              const out = await Process.text([cmd], { shell: sh, nothrow: true, abort: controller.signal })
+              return out.text
+            }),
           ),
-        )
+        ).pipe(Effect.onInterrupt(() => Effect.sync(() => controller.abort())))
         let index = 0
         template = template.replace(bashRegex, () => results[index++])
       }
